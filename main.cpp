@@ -8,16 +8,27 @@ using namespace std;
 
 int main(int argc, char *argv[])
 {
+    cout.precision(3);
     cout<<setbase(16);
-    //cout << "Hello world!" << endl;
-    //cout<<"test enum "<< myI2C_address[IMU] <<endl;
+
+/**************************************************/
+/// signal handler
+
+    #ifdef __linux__
+ 	struct sigaction sig_struct;
+	sig_struct.sa_handler = sig_handler;
+	sig_struct.sa_flags = 0;
+	sigemptyset(&sig_struct.sa_mask);
+
+	if (sigaction(SIGINT, &sig_struct, NULL) == -1)
+    {
+		cout << "Problem with sigaction" << endl;
+		exit(1);
+	}
+	#endif // __linux__
+/***************************************************/
 
     unsigned char read_buffer[288];
-    unsigned char temp_buffer[4];
-    temp_buffer[0]=0;
-    temp_buffer[1]=1;
-    temp_buffer[2]=2;
-    temp_buffer[3]=3;
 
     short temp_reg = 0;
     //temp_reg = (ODR_G_119<<5) | (FS_500 << 3) | G_med;
@@ -31,29 +42,15 @@ int main(int argc, char *argv[])
         readb[sc]=0xae;
         }
 
-
-/// set the file pointer for I2C ======================
+/*******************************/
+/// Init I2C
+/// set the file pointer for I2C
     I2C_FP[IMU]=    I2C_Init(devName,I2C_SLAVE_ADDR_IMU);
     I2C_FP[MAG]=    I2C_Init(devName,I2C_SLAVE_ADDR_MAG);
-    I2C_FP[TEMP]=   I2C_Init(devName,I2C_SLAVE_ADDR_RHTEMP);
 
-    XYZ GYRO;
-    XYZ ACCEL;
-    XYZ COMPASS;
-    op_config op_gyro;
-    op_config op_accel;
-
-    op_accel.op_FS = XL_FS2;
-    op_accel.op_ODR = ODR_119;
-    op_accel.op_BW = G_med;
-
-
-    temp_reg = arr_FS_XL[op_accel.op_FS] | arr_ODR_XLG[op_accel.op_ODR] | op_accel.op_BW;
-
-
-
-/// init XL and gyro ===============
-    for(j=0; j<10;j++)
+/*******************************/
+/// init XL and gyro ===========
+    for(j=0; j<11;j++)
     {
         int check_it = myI2C_write(I2C_FP[IMU], xl_mylist[j].reg_address, xl_mylist[j].value);
         if(check_it < 0)
@@ -62,8 +59,8 @@ int main(int argc, char *argv[])
             exit(1);
         }
     }
-
-/// init mag ===========================
+/*******************************/
+/// init mag =================
     for(j=0; j<5;j++)
     {
         int check_it = myI2C_write(I2C_FP[MAG], m_mylist[j].reg_address, m_mylist[j].value);
@@ -74,51 +71,79 @@ int main(int argc, char *argv[])
         }
     }
 
-/**
-        set-up for do while continous loop; need to add
-        cntr-c action to stop
-*/
+
+/***********************************/
+/// do the loop forever
+/// set-up for do while continous loop;
+/// signal handler breaks the loop
+
+#ifdef LOOP
     clock_t goal;
-   clock_t wait=(clock_t)2 * CLOCKS_PER_SEC;       // change the 2 for update rate, 2= about 2 seconds
-//    do
- //{
+    clock_t wait=(clock_t)2 * CLOCKS_PER_SEC;       // change the 2 for update rate, 2= about 2 seconds
+    do
+{
+#endif // LOOP
+
+    cout<<"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"<<endl;
+
+/******************************/
+/// set the device configurations
+    XYZ GYRO;
+    XYZ ACCEL;
+    XYZ COMPASS;
+
+    op_config myConfig = {1,1,1,
+                            Mag_ODR_10,     /// CRMAG 0x20
+                            Mag_FSR_4,      /// CRMAG 0x21
+                            Mag_CONT,       /// CRMAG 0x22
+                            GYRO_ODR_119,   /// CRG 0x10
+                            GYRO_FSR_250,   /// CRG 0x10
+                            GYRO_BW_1,      /// CRG 0x10
+                            GYRO_HPF_3,     /// CRG 0x12
+                            XL_ODR_119,     /// CRXL 0x20
+                            XL_FSR_8,       /// CRXL 0x20
+                            XL_LPF_50,     /// CRXL 0x20
+                            XL_DCF_100};    /// CRXL 0x21
+/************************************/
+
+    int c_register =0;
+    int c1_register = 0;
 
 
-/*********************************************************
+    /// Gyro items
+    c1_register = arr_ODR_XLG[myConfig.gyro_ODR] | arr_FS_XL[myConfig.gyro_FS];
+    myI2C_write(I2C_FP[IMU], CTRL_REG1_G, c1_register);
+
+    /// XL items
+    c1_register = arr_ODR_XLG[myConfig.XL_ODR] | arr_FS_XL[myConfig.XL_FS] | myConfig.XL_BW;
+    myI2C_write(I2C_FP[IMU], CTRL_REG6_XL, c1_register);
+
+
+
+
+
+
+
+
+/******************************************************
     Read a buffer of size N for gyro and accel
     do the read per page 21 on burst read + temperature
-*********************************************************/
+*******************************************************/
+    int result = -1;
+    result= myI2C_read_block(I2C_FP[IMU], OUT_TEMP_L, 26, read_buffer);
+    result= myI2C_read_block(I2C_FP[MAG], OUT_X_L_M, 6, read_buffer+32);
 
-/// read the 26 registers of gyro data, registers 0x18 - 0x1d IMU_OUT_TEMP_L IMU_OUT_X_L_G
-    int result = i2c_smbus_read_i2c_block_data(I2C_FP[IMU], IMU_OUT_TEMP_L, 26, read_buffer+READ_BUF_G);
-    if(result < 0)
-        {
-            perror("Failed to read from the i2c bus");
-            exit(1);
-        }
-/// read the 6 registers of mag data, registers 0x28 - 0x2d
-    result = i2c_smbus_read_i2c_block_data(I2C_FP[MAG], MAG_OUT_X_L_M, 6, read_buffer+32);
-    if(result < 0)
-        {
-            perror("Failed to read from the i2c bus");
-            exit(1);
-        }
-
-//    cout<<"\nbytes read in: "<<result<<endl;
-//    for(j=0; j<11; j++)
-//        cout<<"buffer at "<<j<<"== "<<(short int)read_buffer[j]<<endl;
-//
-//
-//    for(j=0; j<6;j=j+2)
-//        cout<<(short int)read_buffer[j+1]<<(short int)read_buffer[j]<<endl;
-
+/***************************/
+/// temperature register
     short buftemp = short((read_buffer[temp_LB] | (read_buffer[temp_HB]<<8)));
     buftemp = buftemp/16;
     buftemp = buftemp+25;
-
     printf("is this the temp? %i degress C\n", buftemp);
     cout<<"temp from buffer directly in hex "<<buftemp<<endl;
 
+
+/********************************************/
+///  Gyro register read and convert
     GYRO.x_LB = read_buffer[gx_LB];
     GYRO.x_UB = read_buffer[gx_HB];
     GYRO.y_LB = read_buffer[gy_LB];
@@ -130,28 +155,28 @@ int main(int argc, char *argv[])
     GYRO.y = (GYRO.y_UB<<8) | GYRO.y_LB;
     GYRO.z = (GYRO.z_UB<<8) | GYRO.z_LB;
 
-    float myGX = (float)GYRO.x * G_So[G_FS500];
-    float myGy = (float)GYRO.y * G_So[G_FS500];
-    float myGz = (float)GYRO.z * G_So[G_FS500];
+    float G_offset = 0.00;
 
+    float myGX = (float)GYRO.x * G_So[myConfig.gyro_FS] + G_offset;
+    float myGy = (float)GYRO.y * G_So[myConfig.gyro_FS] + G_offset;
+    float myGz = (float)GYRO.z * G_So[myConfig.gyro_FS] + G_offset;
+    //float myGz = (float)GYRO.z * G_So[G_FS500] + G_offset;
+    float myGX_1 = .02;
+
+    DCM dcm_Gyro ={myGX, myGy,myGz, 0.0};
+    compute_DCM(&dcm_Gyro);
 
     float r_gyro = myGX*myGX +myGy*myGy + myGz*myGz;
     r_gyro =pow(r_gyro, 0.5);
 
-
-
-
-//    cout<<"\t"<<"x\t"<<"y\t"<<"z\t"<<endl;
     cout<<setw(15)<<"x "<<setw(15)<<"y"<<setw(15)<<"z"<<setw(15)<<"r"<<endl;
-    //cout<<"Gyro:\t"<<GYRO.x<<"\t"<<GYRO.y<<"\t"<<GYRO.z<<endl;
+    cout<<"Gyro: "<<setw(15)<<myGX<<setw(15)<<myGy<<setw(15)<<myGz<<setw(15)<<r_gyro<<endl<<endl;;
 
-    //cout<<"Gyro:\t "<<myGX<<"\t"<<myGy<<"\t"<<myGz<<endl;
-    cout<<"Gyro: "<<setw(15)<<myGX<<setw(15)<<myGy<<setw(15)<<myGz<<setw(15)<<r_gyro<<endl;
-//    cout<<"Gyro: "<<
-//        setw(10)<<GYRO.x<<
-//        setw(10)<<GYRO.y<<
-//        setw(10)<<GYRO.z<<endl;
+    //myGX_1 = ((1-ALPHA)*myGX)+(ALPHA*myGX_1);
+    //cout<<"myGX: "<<myGX<<endl<<"myGX_1: "<<myGX_1<<endl;
 
+/********************************************/
+///  Accel register read and convert
     ACCEL.x_LB = read_buffer[xx_LB];
     ACCEL.x_UB = read_buffer[xx_HB];
     ACCEL.y_LB = read_buffer[xy_LB];
@@ -169,39 +194,33 @@ int main(int argc, char *argv[])
     float x_mytest= ACCEL.x;
     float y_mytest= ACCEL.y;
     float z_mytest= ACCEL.z;
+    float XL_offset = 0.005;     // was .02
+    float x1_mytest;
+
+    DCM dcm_Accel ={x_mytest, y_mytest,z_mytest, 0.0};
+    compute_DCM(&dcm_Accel);
 
 
-    //x_mytest = x_mytest*LA_So_2;
-    //y_mytest = y_mytest*LA_So_2;
-    //z_mytest = z_mytest*LA_So_2;
-    //x_mytest = x_mytest * LA_So[XL_FS2];
-    x_mytest = x_mytest * LA_So[op_accel.op_FS];
-    y_mytest = y_mytest * LA_So[XL_FS2];
-    z_mytest = z_mytest * LA_So[XL_FS2];
+    cout<<"XL dircos "<<setw(15)<<(180.0/M_PI)*dcm_Accel.x
+        <<setw(15)<<(180.0/M_PI)*dcm_Accel.y
+        <<setw(15)<<(180.0/M_PI)*dcm_Accel.z
+        <<setw(15)<<dcm_Accel.r<<endl;
+
+
+
+
+    //x_mytest = x_mytest * XL_So[XL_FS2];
+    x_mytest = x_mytest * XL_So[myConfig.XL_FS] + XL_offset;
+    y_mytest = y_mytest * XL_So[myConfig.XL_FS] + XL_offset;
+    z_mytest = z_mytest * XL_So[myConfig.XL_FS] + XL_offset;
 
     float r_accel = x_mytest*x_mytest +y_mytest*y_mytest + z_mytest*z_mytest;
-
     r_accel =pow(r_accel, 0.5);
-    //cout<<"r_accel: "<<r_accel<<endl;
 
+    cout<<"Accel:"<<setw(15)<<x_mytest<<setw(15)<<y_mytest<<setw(15)<<z_mytest<<setw(15)<<r_accel<<endl<<endl;
 
-    //cout<<"mytest accel.y "<<mytest<<endl;
-
-    //cout<<"2 complement "<< short(TC_CONVERT(ACCEL.y))<<endl;
-
-
-//    cout<<"\t"<<"x\t"<<"y\t"<<"z\t"<<endl;
-    //cout<<"Accel:\t"<<ACCEL.x<<"\t"<<ACCEL.y<<"\t"<<ACCEL.z<<endl;
- //   cout<<"Accel:\t"<<x_mytest<<"\t"<<y_mytest<<"\t"<<z_mytest<<endl;
-    cout<<"Accel:"<<setw(15)<<x_mytest<<setw(15)<<y_mytest<<setw(15)<<z_mytest<<setw(15)<<r_accel<<endl;
-//    cout<<"Accel: "<<
-//        setw(10)<<ACCEL.x<<
-//        setw(10)<<ACCEL.y<<
-//        setw(10)<<ACCEL.z<<endl;
-
-
-
-
+/********************************************/
+///  Magnetometer register read and convert
     COMPASS.x_LB = read_buffer[mx_LB];
     COMPASS.x_UB = read_buffer[mx_HB];
     COMPASS.y_LB = read_buffer[my_LB];
@@ -213,171 +232,124 @@ int main(int argc, char *argv[])
     COMPASS.y = (COMPASS.y_UB<<8) | COMPASS.y_LB;
     COMPASS.z = (COMPASS.z_UB<<8) | COMPASS.z_LB;
 
-    float myCx = (float)COMPASS.x * M_GN[M_FS4];
-    float myCy = (float)COMPASS.y * M_GN[M_FS4];
-    float myCz = (float)COMPASS.z * M_GN[M_FS4];
+    float myCx = (float)COMPASS.x * M_GN[myConfig.mag_FS];    // gauss
+    float myCy = (float)COMPASS.y * M_GN[myConfig.mag_FS];
+    float myCz = (float)COMPASS.z * M_GN[myConfig.mag_FS];
+
+    //float myCx = (float)COMPASS.x * M_GN[M_FS4];    // gauss
+    //float myCx = (float)COMPASS.x * .00014;    // gauss
+    //float myCy = (float)COMPASS.y * M_GN[M_FS4];
+    //float myCz = (float)COMPASS.z * M_GN[M_FS4];
 
     float r_comp = myCx*myCx +myCy*myCy + myCz*myCz;
-
     r_comp =pow(r_comp, 0.5);
 
-    float dircosx = atan(myCx/r_comp);      //radians
-    float dircosy = atan(myCy/r_comp);
-    float dircosz = atan(myCz/r_comp);
+/// direction cosines
+    float dircosx = acos(myCx/r_comp);      //radians
+    float dircosy = acos(myCy/r_comp);
+    float dircosz = acos(myCz/r_comp);
 
-    cout<<"dircos x "<<(180.0/3.141)*dircosx
-        <<"\ndircos y "<<(180.0/3.141)*dircosy
-        <<"\ndircos z "<<(180.0/3.141)*dircosz<<endl;
+/// heading
+    float heading = 0.0;
+    //heading = atan(myCx/myCy);  /// or is this y/x?
+    heading = atan(myCy/myCx);
+    heading = heading *(180/M_PI);
 
+    if(myCy > 0)
+        heading = 90 - heading;
+    if(myCy < 0)
+        heading = 270 - heading;
 
 
     //cout<<"COMP:\t"<<COMPASS.x<<"\t"<<COMPASS.y<<"\t"<<COMPASS.z<<endl;
  //   cout<<"COMP:\t"<<myCx<<"\t"<<myCy<<"\t"<<myCz<<endl;
     cout<<"COMP: "<<setw(15)<<myCx<<setw(15)<<myCy<<setw(15)<<myCz<<setw(15)<<r_comp<<endl;
+    cout<<"C RAW: "<<dec<<setw(15)<<COMPASS.x<<setw(15)<<COMPASS.y<<setw(15)<<COMPASS.z<<endl;
+
+    cout<<"dircos "<<setw(15)<<(180.0/M_PI)*dircosx
+        <<setw(15)<<(180.0/M_PI)*dircosy
+        <<setw(15)<<(180.0/M_PI)*dircosz<<endl;
+
+    cout<<"true heading = "<<heading<<endl;
 
 
-
-
-    result= myI2C_read(I2C_FP[IMU], IMU_STATUS_REG);
+    result= myI2C_read(I2C_FP[IMU], STATUS_REG);
     cout<<"status reg x17 data "<<result<<endl;
 
-//    int templ= myI2C_read(I2C_FP[IMU], IMU_OUT_TEMP_L);
-//    int temph= myI2C_read(I2C_FP[IMU], IMU_OUT_TEMP_H);
-//    short tempdata = templ | (temph<<8);
-//    cout<<"temp data "<<(~(tempdata)+1)<<endl;
 
 
-    for(i=0; i< 12; i++)
-    {
-        //okornot= myI2C_read(I2C_FP[IMU], IMU_OUT_X_L_G+i);
-        okornot= myI2C_read(I2C_FP[IMU], 0x15+i);
-        if(okornot < 0)
-        {
-            perror("Failed to read from the i2c bus");
-            exit(1);
-        }
-//        cout<<"single buffer at: "
-//        <<(0x15+i)                 //  <<(IMU_OUT_X_L_G+i)
-//        <<" is: "
-//        <<okornot<<endl;
-    }
-
-
-
-/// stuff for the HTS221 temp-humidity device =======
-    //result = myI2C_write(I2C_FP[TEMP], RHT_CTRL_REG1, 0x23);
-    result = myI2C_write(I2C_FP[TEMP], RHT_CTRL_REG1, 0x81);    // was x87
-    result = myI2C_write(I2C_FP[TEMP], RHT_AV_CONF, 0x23);  //was 1b
-
-   result = i2c_smbus_read_i2c_block_data(I2C_FP[TEMP], (0x30 | RHT_BUS_READ), 18, readb);
-    if(result < 0)
-        {
-            perror("Failed to read from the i2c bus");
-            exit(1);
-        }
-
-   result = i2c_smbus_read_i2c_block_data(I2C_FP[TEMP], (RHT_TEMP_OUT_L | RHT_BUS_READ), 2, temp_buffer);
-    if(result < 0)
-        {
-            perror("Failed to read 2a 2b from the i2c bus");
-            exit(1);
-        }
-
-    int16_t T0_out, T1_out, T_out, T0_degC_x8_u16, T1_degC_x8_u16;
-    int16_t T0_degC, T1_degC;
-    unsigned char t_buffer[4];
-    uint8_t t_tmp;
-    uint32_t tmp32;
-    float slope =0.0;
-
-    uint8_t t_result = i2c_smbus_read_i2c_block_data(I2C_FP[TEMP], (RHT_T0_degC_x8  | RHT_BUS_READ), 2, t_buffer);
-    if(t_result < 0)
-        {
-            perror("Failed to read 32 and 33 from the i2c bus");
-            exit(1);
-        }
-
-
-    t_result = myI2C_read(I2C_FP[TEMP], RHT_T1_T0_MSB);
-    if(t_result < 0)
-        {
-            perror("Failed to read 35 from the i2c bus");
-            exit(1);
-        }
-
-
-    T0_degC_x8_u16 = (((uint16_t)(t_result & 0x03))<<8) | ((uint16_t)t_buffer[0]);
-    T1_degC_x8_u16 = (((uint16_t)(t_result & 0x0c))<<6) | ((uint16_t)t_buffer[1]);
-    T0_degC = T0_degC_x8_u16 >>3;
-    T1_degC = T1_degC_x8_u16 >>3;
-//    cout<<"T0_degC= "<<T0_degC<<endl;
-//    cout<<"T1_degC= "<<T1_degC<<endl;
-
-    float rise = (float)T1_degC - (float)T0_degC;
-//    cout<<"rise = "<<rise<<endl;
-
-
-    t_result = i2c_smbus_read_i2c_block_data(I2C_FP[TEMP], (RHT_T0_OUT_L | RHT_BUS_READ), 4, t_buffer);
-    if(t_result < 0)
-        {
-            perror("Failed to read 3c 3d 3e 3f from the i2c bus");
-            exit(1);
-        }
-
-    T0_out = (((uint16_t)t_buffer[1])<<8) | (uint16_t)t_buffer[0];
-    T1_out = (((uint16_t)t_buffer[3])<<8) | (uint16_t)t_buffer[2];
-//    cout<<"T0_out= "<<T0_out<<endl;
- //   cout<<"T1_out= "<<T1_out<<endl;
-
-    float run = (float)T1_out - (float)T0_out;
-//    cout<<"run = "<<run<<endl;
-
-    slope = rise/run;
-//    cout<<"slope =  "<<slope<<endl;
-
-
-
-    T_out = (((uint16_t)temp_buffer[1])<<8) | (uint16_t)temp_buffer[0];
-//    cout<<"T_out from 2a 2b= "<<T_out<<endl;
-
-    tmp32 =((uint32_t)(T_out - T0_out)) * ((uint32_t)(T1_degC - T0_degC)*10);
-
-    float intercept = (float)T0_degC - slope*(float)T0_out;
-//    cout<<"intercept= "<<intercept<<endl;
-
-    int16_t value = tmp32/(T1_out - T0_out) + T0_degC*10;
-    cout<<"temp is deg C: "<<dec<<(value/10)<<endl;
-    //cout<<"temp is deg C: "<<(value/10)<<endl;
-
-
-
-    float t_temp = T_out*slope + intercept;
-    cout<<"slope temp= "<<t_temp<<endl;
-
-// reset to default for control registers
-    //myI2C_write(I2C_FP[IMU], IMU_CTRL_REG3_G, 0x00);
-    //myI2C_write(I2C_FP[IMU], IMU_CTRL_REG1_G, 0x00);
-    //myI2C_write(I2C_FP[TEMP], RHT_CTRL_REG1, 0x00);
-
-    result = myI2C_read(I2C_FP[IMU], IMU_FIFO_SRC);
+    result = myI2C_read(I2C_FP[IMU], FIFO_SRC);
     cout<<"fifo status "<<result<<endl;
 
-    /// TEST
-    //register_set_bit(I2C_FP[IMU], IMU_CTRL_REG9, FIFO_enable_bit);
-    //register_clear_bit(I2C_FP[IMU], IMU_CTRL_REG9, FIFO_enable_bit);
 
 
-//   goal = wait + clock();
- //   while( goal > clock() );
+/*******************************************/
+/// signal handler to break the do while(1) loop
+#ifdef LOOP
+    if(ctrl_c_pressed)
+    {
+        cout << "Ctrl^C Pressed" << endl;
+        cout << "unexporting pins" << endl;
+        //gpio26->unexport_gpio();
+        //gpio16->unexport_gpio();
+        cout << "deallocating GPIO Objects" << endl;
+        //delete gpio26;
+        //gpio26 = 0;
+        break;
+    }
+/*****************************************/
 
-//}
-//while(1);
+    goal = wait + clock();
+    while( goal > clock() );
+}
 
+/***********************************/
+/// do the loop forever
+    while(1);
+#endif // LOOP
+
+    /// cleanup and close
     close(I2C_FP[IMU]);
     close(I2C_FP[MAG]);
-    close(I2C_FP[TEMP]);
+    cout<<"good bye"<<endl;
+
     return 0;
 }
+
+
+
+/**********************************/
+/// DCM
+void compute_DCM(DCM* p_DCM)
+{
+    float rmag = (p_DCM->x *p_DCM->x) + (p_DCM->y *p_DCM->y) + (p_DCM->z *p_DCM->z);
+    p_DCM->r = pow(rmag, 0.5);
+    p_DCM->x = acos(p_DCM->x/p_DCM->r);
+    p_DCM->y = acos(p_DCM->y/p_DCM->r);
+    p_DCM->z = acos(p_DCM->z/p_DCM->r);
+
+
+/// direction cosines
+//    float dircosx = acos(myCx/r_comp);      //radians
+//    float dircosy = acos(myCy/r_comp);
+//    float dircosz = acos(myCz/r_comp);
+
+}
+
+
+
+/**********************************/
+/// signal handler
+void sig_handler(int sig)
+{
+	write(0,"\nCtrl^C pressed in sig handler\n",32);
+	ctrl_c_pressed = true;
+}
+
+
+/************************************/
+/// I2C stuff
+///
 
 int I2C_Init(const char* devname, int slaveaddress)
 {
@@ -419,6 +391,24 @@ int myI2C_write(int myFP, int reg_request, int data)
         }
     return result;
 }
+
+
+
+int myI2C_read_block(int myFP, int reg_request, int rd_size, unsigned char* readbuffer)
+{
+
+/// read the 26 registers of gyro data, registers 0x18 - 0x1d IMU_OUT_TEMP_L IMU_OUT_X_L_G
+    //int result = i2c_smbus_read_i2c_block_data(I2C_FP[IMU], OUT_TEMP_L, 26, read_buffer+READ_BUF_G);
+    int result = i2c_smbus_read_i2c_block_data(myFP, reg_request, rd_size, readbuffer);
+    if(result < 0)
+        {
+            perror("Failed to read from the i2c bus");
+            exit(1);
+        }
+
+    return result;
+}
+/************************************/
 
 
 
@@ -506,4 +496,83 @@ int register_clear_bit(int fp, int RTC_reg, int bit_number)
         }
     }
 ********************************************/
+
+
+
+
+
+/// read the 26 registers of gyro data, registers 0x18 - 0x1d IMU_OUT_TEMP_L IMU_OUT_X_L_G
+    //int result = i2c_smbus_read_i2c_block_data(I2C_FP[IMU], OUT_TEMP_L, 26, read_buffer+READ_BUF_G);
+    //if(result < 0)
+    //    {
+    //        perror("Failed to read from the i2c bus");
+    //        exit(1);
+    //    }
+/// read the 6 registers of mag data, registers 0x28 - 0x2d
+    //int result = i2c_smbus_read_i2c_block_data(I2C_FP[MAG], OUT_X_L_M, 6, read_buffer+32);
+    //if(result < 0)
+    //    {
+    //        perror("Failed to read from the i2c bus");
+    //        exit(1);
+    //    }
+
+//    cout<<"\nbytes read in: "<<result<<endl;
+//    for(j=0; j<11; j++)
+//        cout<<"buffer at "<<j<<"== "<<(short int)read_buffer[j]<<endl;
+//
+//
+//    for(j=0; j<6;j=j+2)
+//        cout<<(short int)read_buffer[j+1]<<(short int)read_buffer[j]<<endl;
+
+
+
+
+
+/// update control registers for config settings
+
+
+//        short temp_value = arr_FS_XL[op_gyro.op_FS] | arr_ODR_XLG[op_gyro.op_ODR] | op_gyro.op_BW ;
+
+//        int check_it = myI2C_write(I2C_FP[IMU], CTRL_REG1_G, temp_value);
+//        if(check_it < 0)
+//        {
+//            perror("Failed to write to Accel init");
+//            exit(1);
+//        }
+
+//        temp_value = arr_FS_XL[op_accel.op_FS] | arr_ODR_XLG[op_accel.op_ODR] | op_accel.op_BW ;
+//        check_it = myI2C_write(I2C_FP[IMU],CTRL_REG6_XL, temp_value);
+//        if(check_it < 0)
+//        {
+//            perror("Failed to write to M init");
+//            exit(1);
+//        }
+
+
+
+ //   switch(myConfig.gyro_ODR)
+ //   {
+ //       case GYRO_ODR_14_9:
+ //           c_register = ODR_G_14_9;
+//            break;
+//        case GYRO_ODR_59_5:
+//            c_register = ODR_G_59_5;
+//            break;
+//        case GYRO_ODR_119:
+//            c_register = ODR_G_119;
+//            break;
+//        case GYRO_ODR_238:
+//            c_register = ODR_G_238;
+//            break;
+//        case GYRO_ODR_476:
+//            c_register = ODR_G_476;
+//            break;
+//        case GYRO_ODR_952:
+//            c_register = ODR_G_952;
+//            break;
+//        default:
+//            c_register = 0x00;
+//    }
+
+
 
